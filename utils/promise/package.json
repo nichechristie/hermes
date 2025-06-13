@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@rollup/plugin-commonjs": "~15.0.0",
+    "@rollup/plugin-commonjs": "~28.0.0",
     "@rollup/plugin-node-resolve": "~9.0.0",
     "promise": "8.3.0"
   },
