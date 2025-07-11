@@ -2069,6 +2069,24 @@ const getTransforms = (
           return unsupportedAnnotation(node, fullTypeName);
         }
 
+        case '$ArrayLike': {
+          // `$ArrayLike<T>` => `ArrayLike<T>`
+          return {
+            type: 'TSTypeReference',
+            loc: DUMMY_LOC,
+            typeName: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: 'ArrayLike',
+            },
+            typeParameters: {
+              type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
+              params: assertHasExactlyNTypeParameters(1),
+            },
+          };
+        }
+
         case '$Diff':
         case '$Rest': {
           // `$Diff<A, B>` => `Pick<A, Exclude<keyof A, keyof B>>`
@@ -2685,7 +2703,7 @@ const getTransforms = (
                 },
               },
             };
-          // React.MixedElement -> JSX.Element
+          // React.MixedElement -> React.JSX.Element
           case 'React$MixedElement':
           case 'React.MixedElement': {
             assertHasExactlyNTypeParameters(0);
@@ -2696,9 +2714,18 @@ const getTransforms = (
                 type: 'TSQualifiedName',
                 loc: DUMMY_LOC,
                 left: {
-                  type: 'Identifier',
+                  type: 'TSQualifiedName',
                   loc: DUMMY_LOC,
-                  name: 'JSX',
+                  left: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'React',
+                  },
+                  right: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'JSX',
+                  },
                 },
                 right: {
                   type: 'Identifier',
@@ -2840,8 +2867,8 @@ const getTransforms = (
               },
             };
           }
-          // React.ElementConfig<A> ->  JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
-          // React$ElementConfig<A> ->  JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
+          // React.ElementConfig<A> ->  React.JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
+          // React$ElementConfig<A> ->  React.JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
           case 'React.ElementConfig':
           case 'React$ElementConfig': {
             const [param] = assertHasExactlyNTypeParameters(1);
@@ -2852,9 +2879,18 @@ const getTransforms = (
                 type: 'TSQualifiedName',
                 loc: DUMMY_LOC,
                 left: {
-                  type: 'Identifier',
+                  type: 'TSQualifiedName',
                   loc: DUMMY_LOC,
-                  name: 'JSX',
+                  left: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'React',
+                  },
+                  right: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'JSX',
+                  },
                 },
                 right: {
                   type: 'Identifier',

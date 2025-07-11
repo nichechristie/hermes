@@ -10,183 +10,146 @@
 
 #include <hermes/Public/HermesExport.h>
 
+#include <cstdint>
+#include <deque>
+#include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace facebook {
 namespace hermes {
 namespace sampling_profiler {
 
-/// Provides details about the Process where sampling occurred.
-struct HERMES_EXPORT Process {
+/// Helper-class that represents a pair of iterators, which form a range to
+/// iterate over.
+template <typename Iterator>
+class Range {
  public:
-  explicit Process(uint64_t id) : id_(id) {}
+  Range(Iterator begin, Iterator end) : begin_(begin), end_(end) {}
 
-  /// \return id of the OS process, where sampling occurred.
-  uint64_t getId() const {
-    return id_;
+  Iterator begin() const {
+    return begin_;
+  }
+  Iterator end() const {
+    return end_;
   }
 
  private:
-  /// OS-level id of the process.
-  uint64_t id_;
+  Iterator begin_;
+  Iterator end_;
 };
 
-/// Provides details about the Thread where sampling occurred.
-struct HERMES_EXPORT Thread {
+/// Helper for creating Range and deducing the type based on input.
+template <typename Iterator>
+Range<Iterator> makeRange(Iterator begin, Iterator end) {
+  return Range<Iterator>(begin, end);
+}
+
+/// JavaScript function frame. Guaranteed to have function name, potentially
+/// an empty string, if function is anonymous or if function names were filtered
+/// out during bytecode compilation. Could have scriptId, url, line and column
+/// numbers, if debug source location is available.
+class HERMES_EXPORT ProfileSampleCallStackJSFunctionFrame {
  public:
-  Thread(uint64_t id, const std::string &name) : id_(id), name_(name) {}
-
-  /// \return id of the OS thread, where sampling occurred.
-  uint64_t getId() const {
-    return id_;
-  }
-
-  /// \return name of the OS thread, where sampling occurred.
-  const std::string &getName() const {
-    return name_;
-  }
-
- private:
-  /// OS-level id of the thread.
-  uint64_t id_;
-  /// OS-level name of the thread.
-  std::string name_;
-};
-
-/// Represents a single frame inside the captured sample stack.
-/// Base struct for different kinds of frames.
-struct HERMES_EXPORT ProfileSampleCallStackFrame {
-  /// Represents type of frame inside of recorded call stack.
-  enum class Kind {
-    JSFunction, /// JavaScript function frame.
-    NativeFunction, /// Native built-in functions, like arrayPrototypeMap.
-    HostFunction, /// Native functions, defined by Host, a.k.a. Host functions.
-    Suspend, /// Frame that suspends the execution of the VM: GC or Debugger.
-  };
-
- public:
-  explicit ProfileSampleCallStackFrame(const Kind kind) : kind_(kind) {}
-
-  /// \return type of the call stack frame.
-  Kind getKind() const {
-    return kind_;
-  }
-
- private:
-  Kind kind_;
-};
-
-/// Extends ProfileSampleCallStackFrame with an information about JavaScript
-/// function frame: function name, and possibly scriptId, url, line and column
-/// numbers.
-struct HERMES_EXPORT ProfileSampleCallStackJSFunctionFrame
-    : public ProfileSampleCallStackFrame {
   explicit ProfileSampleCallStackJSFunctionFrame(
-      const std::string &functionName,
-      const std::optional<uint32_t> &scriptId = std::nullopt,
-      const std::optional<std::string> &url = std::nullopt,
+      std::string_view functionName,
+      uint32_t scriptId,
+      const std::optional<std::string_view> &scriptUrl = std::nullopt,
       const std::optional<uint32_t> &lineNumber = std::nullopt,
       const std::optional<uint32_t> &columnNumber = std::nullopt)
-      : ProfileSampleCallStackFrame(
-            ProfileSampleCallStackFrame::Kind::JSFunction),
-        functionName_(functionName),
+      : functionName_(functionName),
         scriptId_(scriptId),
-        url_(url),
+        scriptUrl_(scriptUrl),
         lineNumber_(lineNumber),
         columnNumber_(columnNumber) {}
 
   /// \return name of the function that represents call frame.
-  const std::string &getFunctionName() const {
+  std::string_view getFunctionName() const {
     return functionName_;
-  }
-
-  bool hasScriptId() const {
-    return scriptId_.has_value();
   }
 
   /// \return id of the corresponding script in the VM.
   uint32_t getScriptId() const {
-    return scriptId_.value();
+    return scriptId_;
   }
 
-  bool hasUrl() const {
-    return url_.has_value();
+  bool hasScriptUrl() const {
+    return scriptUrl_.has_value();
   }
 
   /// \return source url of the corresponding script in the VM.
-  const std::string &getUrl() const {
-    return url_.value();
+  std::string_view getScriptUrl() const {
+    return scriptUrl_.value();
   }
 
-  bool hasLineNumber() const {
+  bool hasFunctionLineNumber() const {
     return lineNumber_.has_value();
   }
 
-  /// \return 1-based line number of the corresponding call frame.
-  uint32_t getLineNumber() const {
+  /// \return 1-based line number of the location where the function definition
+  /// starts.
+  uint32_t getFunctionLineNumber() const {
     return lineNumber_.value();
   }
 
-  bool hasColumnNumber() const {
+  bool hasFunctionColumnNumber() const {
     return columnNumber_.has_value();
   }
 
-  /// \return 1-based column number of the corresponding call frame.
-  uint32_t getColumnNumber() const {
+  /// \return 1-based column number of the location where the function
+  /// definition starts.
+  uint32_t getFunctionColumnNumber() const {
     return columnNumber_.value();
   }
 
  private:
-  std::string functionName_;
-  std::optional<uint32_t> scriptId_;
-  std::optional<std::string> url_;
+  std::string_view functionName_;
+  uint32_t scriptId_;
+  std::optional<std::string_view> scriptUrl_;
   std::optional<uint32_t> lineNumber_;
   std::optional<uint32_t> columnNumber_;
 };
 
-/// Extends ProfileSampleCallStackFrame with a function name.
-struct HERMES_EXPORT ProfileSampleCallStackNativeFunctionFrame
-    : public ProfileSampleCallStackFrame {
+/// Native (Hermes) function frame. Example: implementation of a built-in
+/// Array.prototype.map.
+class HERMES_EXPORT ProfileSampleCallStackNativeFunctionFrame {
  public:
   explicit ProfileSampleCallStackNativeFunctionFrame(
-      const std::string &functionName)
-      : ProfileSampleCallStackFrame(
-            ProfileSampleCallStackFrame::Kind::NativeFunction),
-        functionName_(functionName) {}
+      std::string_view functionName)
+      : functionName_(functionName) {}
 
   /// \return name of the function that represents call frame.
-  const std::string &getFunctionName() const {
+  std::string_view getFunctionName() const {
     return functionName_;
   }
 
  private:
-  std::string functionName_;
+  std::string_view functionName_;
 };
 
-/// Extends ProfileSampleCallStackFrame with a function name.
-struct HERMES_EXPORT ProfileSampleCallStackHostFunctionFrame
-    : public ProfileSampleCallStackFrame {
+/// Host function frame. Native functions defined by the integrator. Example:
+/// for React Native, this could be performance.measure or console.log.
+class HERMES_EXPORT ProfileSampleCallStackHostFunctionFrame {
  public:
   explicit ProfileSampleCallStackHostFunctionFrame(
-      const std::string &functionName)
-      : ProfileSampleCallStackFrame(
-            ProfileSampleCallStackFrame::Kind::HostFunction),
-        functionName_(functionName) {}
+      std::string_view functionName)
+      : functionName_(functionName) {}
 
   /// \return name of the function that represents call frame.
-  const std::string &getFunctionName() const {
+  std::string_view getFunctionName() const {
     return functionName_;
   }
 
  private:
-  std::string functionName_;
+  std::string_view functionName_;
 };
 
-/// Extends ProfileSampleCallStackFrame with a suspend frame information.
-struct HERMES_EXPORT ProfileSampleCallStackSuspendFrame
-    : public ProfileSampleCallStackFrame {
+/// Frame that suspends the execution of the VM: could be GC, Debugger or
+/// combination of them.
+class HERMES_EXPORT ProfileSampleCallStackSuspendFrame {
+ public:
   /// Subtype of the Suspend frame.
   enum class SuspendFrameKind {
     GC, /// Frame that suspends the execution of the VM due to GC.
@@ -194,11 +157,9 @@ struct HERMES_EXPORT ProfileSampleCallStackSuspendFrame
     Multiple, /// Multiple suspensions have occurred.
   };
 
- public:
   explicit ProfileSampleCallStackSuspendFrame(
       const SuspendFrameKind suspendFrameKind)
-      : ProfileSampleCallStackFrame(ProfileSampleCallStackFrame::Kind::Suspend),
-        suspendFrameKind_(suspendFrameKind) {}
+      : suspendFrameKind_(suspendFrameKind) {}
 
   /// \return subtype of the suspend frame.
   SuspendFrameKind getSuspendFrameKind() const {
@@ -209,14 +170,27 @@ struct HERMES_EXPORT ProfileSampleCallStackSuspendFrame
   SuspendFrameKind suspendFrameKind_;
 };
 
+/// Variant of all possible call stack frames options.
+using ProfileSampleCallStackFrame = std::variant<
+    ProfileSampleCallStackSuspendFrame,
+    ProfileSampleCallStackNativeFunctionFrame,
+    ProfileSampleCallStackHostFunctionFrame,
+    ProfileSampleCallStackJSFunctionFrame>;
+
 /// A pair of a timestamp and a snapshot of the call stack at this point in
 /// time.
-struct HERMES_EXPORT ProfileSample {
+class HERMES_EXPORT ProfileSample {
  public:
+  using CallStackFrameIterator =
+      std::vector<ProfileSampleCallStackFrame>::const_iterator;
+
   ProfileSample(
       uint64_t timestamp,
-      std::vector<ProfileSampleCallStackFrame *> callStack)
-      : timestamp_(timestamp), callStack_(std::move(callStack)) {}
+      uint64_t threadId,
+      std::vector<ProfileSampleCallStackFrame> callStack)
+      : timestamp_(timestamp),
+        threadId_(threadId),
+        callStack_(std::move(callStack)) {}
 
   /// \return serialized unix timestamp in microseconds granularity. The
   /// moment when this sample was recorded.
@@ -224,50 +198,72 @@ struct HERMES_EXPORT ProfileSample {
     return timestamp_;
   }
 
-  /// \return a snapshot of the call stack. The first element of the vector is
-  /// the lowest frame in the stack.
-  const std::vector<ProfileSampleCallStackFrame *> &getCallStack() const {
-    return callStack_;
+  /// \return thread id where sample was recorded.
+  uint64_t getThreadId() const {
+    return threadId_;
+  }
+
+  /// \return a pair of iterators that can be used for iterating over call stack
+  /// frames, the order will be from callee to caller.
+  Range<CallStackFrameIterator> getCallStackFramesRange() const {
+    return makeRange(callStack_.begin(), callStack_.end());
+  }
+
+  /// \return the number of frames inside the call stack of this sample.
+  size_t getCallStackFramesCount() const {
+    return callStack_.size();
   }
 
  private:
   /// When the call stack snapshot was taken (μs).
   uint64_t timestamp_;
+  /// Thread id where sample was recorded.
+  uint64_t threadId_;
   /// Snapshot of the call stack. The first element of the vector is
   /// the lowest frame in the stack.
-  std::vector<ProfileSampleCallStackFrame *> callStack_;
+  std::vector<ProfileSampleCallStackFrame> callStack_;
 };
 
 /// Contains relevant information about the sampled trace from start to finish.
-struct HERMES_EXPORT Profile {
+class HERMES_EXPORT Profile {
  public:
-  Profile(Process process, Thread thread, std::vector<ProfileSample> samples)
-      : process_(process),
-        thread_(std::move(thread)),
-        samples_(std::move(samples)) {}
+  using SampleIterator = std::vector<ProfileSample>::const_iterator;
 
-  /// \return details about the Process where sampling occurred.
-  const Process &getProcess() const {
-    return process_;
+  Profile(
+      std::vector<ProfileSample> samples,
+      std::unique_ptr<std::deque<std::string>> stringStorage)
+      : samples_(std::move(samples)),
+        stringStorage_(std::move(stringStorage)) {}
+
+  Profile(Profile &&) = default;
+  Profile &operator=(Profile &&) = default;
+
+  /// Not copyable, maintains the ownership of the storage of strings.
+  Profile(const Profile &) = delete;
+  Profile &operator=(const Profile &) = delete;
+
+  ~Profile() = default;
+
+  /// \return a pair of iterators that can be used for iterating over recorded
+  /// samples, will happen in chronological order.
+  Range<SampleIterator> getSamplesRange() const {
+    return makeRange(samples_.begin(), samples_.end());
   }
 
-  /// \return details about the Thread where sampling occurred.
-  const Thread &getThread() const {
-    return thread_;
-  }
-
-  /// \return list of recorded samples, should be chronologically sorted.
-  const std::vector<ProfileSample> &getSamples() const {
-    return samples_;
+  /// \return the number of recorded samples.
+  size_t getSamplesCount() const {
+    return samples_.size();
   }
 
  private:
-  /// Represents OS process where sampling occurred.
-  Process process_;
-  /// Represents OS thread where sampling occurred.
-  Thread thread_;
   /// List of recorded samples, should be chronologically sorted.
   std::vector<ProfileSample> samples_;
+  /// Smart pointer to the string storage, owns the strings.
+  /// Frames inside this Profile keep a reference to the storage and know how to
+  /// get std::string_view to the actual string.
+  /// The storage lifetime is tied to the lifetime of the Profile. Samples and
+  /// Frames should not outlive the Profile.
+  std::unique_ptr<std::deque<std::string>> stringStorage_;
 };
 
 } // namespace sampling_profiler

@@ -122,13 +122,14 @@ uint32_t SamplingProfiler::walkRuntimeStack(
       }
     }
   }
-  sampleStorage.tid = oscompat::global_thread_id();
+  sampleStorage.tid = threadID_;
   sampleStorage.timeStamp = std::chrono::steady_clock::now();
   return count;
 }
 
-SamplingProfiler::SamplingProfiler(Runtime &runtime) : runtime_{runtime} {
-  threadNames_[oscompat::global_thread_id()] = oscompat::thread_name();
+SamplingProfiler::SamplingProfiler(Runtime &runtime)
+    : threadID_{oscompat::global_thread_id()}, runtime_{runtime} {
+  threadNames_[threadID_] = oscompat::thread_name();
   sampling_profiler::Sampler::get()->registerRuntime(this);
 }
 
@@ -208,26 +209,11 @@ void SamplingProfiler::serializeInDevToolsFormat(llvh::raw_ostream &OS) {
   clear();
 }
 
-std::vector<facebook::hermes::sampling_profiler::Profile>
-SamplingProfiler::dumpAsProfilesGlobal() {
-  auto globalProfiler = sampling_profiler::Sampler::get();
-  std::lock_guard<std::mutex> lk(globalProfiler->profilerLock_);
-
-  std::vector<facebook::hermes::sampling_profiler::Profile> profiles;
-  for (auto *currentProfilerInstance : globalProfiler->profilers_) {
-    auto profileForCurrentInstance = currentProfilerInstance->dumpAsProfile();
-    profiles.push_back(std::move(profileForCurrentInstance));
-  }
-
-  return profiles;
-}
-
 facebook::hermes::sampling_profiler::Profile SamplingProfiler::dumpAsProfile() {
   std::lock_guard<std::mutex> lk(runtimeDataLock_);
-  auto pid = oscompat::process_id();
 
   facebook::hermes::sampling_profiler::Profile profile =
-      ProfileGenerator::generate(*this, pid, threadNames_, sampledStacks_);
+      generateProfile(*this, sampledStacks_);
 
   clear();
   return profile;
